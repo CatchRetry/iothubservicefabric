@@ -1,8 +1,11 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Fabric;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.ServiceBus;
+using Microsoft.ServiceBus.Messaging;
 using Microsoft.ServiceFabric.Data.Collections;
 using Microsoft.ServiceFabric.Services.Communication.Runtime;
 using Microsoft.ServiceFabric.Services.Runtime;
@@ -44,6 +47,9 @@ namespace RoutingService
             string iotHubConnectionString = GetIotHubConnectionString();
             ServiceEventSource.Current.ServiceMessage(this.Context, $"IotHub ConnectionString = {iotHubConnectionString}");
 
+            // Get an EventHub client connected to the IOT Hub
+            EventHubClient eventHubClient = GetAmqpEventHubClient(iotHubConnectionString);
+
             while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -80,6 +86,33 @@ namespace RoutingService
             Int64RangePartitionInformation partitionInfo = (Int64RangePartitionInformation)this.Partition.PartitionInfo;
             long servicePartitionKey = partitionInfo.LowKey;
             return servicePartitionKey;
+        }
+
+
+        /// <summary>
+        /// Creates an EventHubClient through AMQP protocol
+        /// </summary>
+        /// <param name="iotHubConnectionString"></param>
+        private EventHubClient GetAmqpEventHubClient(string iotHubConnectionString)
+        {
+            // EventHubs doesn't support NetMessaging, so ensure the transport type is AMQP.
+            ServiceBusConnectionStringBuilder connectionStringBuilder =
+                new ServiceBusConnectionStringBuilder(iotHubConnectionString)
+                {
+                    TransportType = TransportType.Amqp
+                };
+
+            ServiceEventSource.Current.ServiceMessage(
+                this.Context,
+                "RoutingService connecting to IoT Hub at {0}",
+                new object[] { string.Join(",", connectionStringBuilder.Endpoints.Select(x => x.ToString())) });
+
+            // A new MessagingFactory is created here so that each partition of this service will have its own MessagingFactory.
+            // This gives each partition its own dedicated TCP connection to IoT Hub.
+            MessagingFactory messagingFactory = MessagingFactory.CreateFromConnectionString(connectionStringBuilder.ToString());
+            EventHubClient eventHubClient = messagingFactory.CreateEventHubClient("messages/events");
+
+            return eventHubClient;
         }
     }
 }
