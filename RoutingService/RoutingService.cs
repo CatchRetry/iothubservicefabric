@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Fabric;
 using System.Linq;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.ServiceBus;
@@ -57,7 +58,27 @@ namespace RoutingService
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
+                try
+                {
+                    using (EventData eventData = await eventHubReceiver.ReceiveAsync(TimeSpan.FromSeconds(5)))
+                    {
+                        if (eventData == null)
+                        {
+                            continue;
+                        }
+
+                        ServiceEventSource.Current.Message(
+                            $"(RoutingService's Partition {partitionKey}) received a message: {Encoding.UTF8.GetString(eventData.GetBytes())})"
+                        );
+                    }
+                }
+                catch (Exception e)
+                {
+                    ServiceEventSource.Current.ServiceMessage(
+                        this.Context,
+                        "{0}",
+                        new[] { e.Message });
+                }
             }
         }
 
@@ -139,7 +160,7 @@ namespace RoutingService
 
             ServiceEventSource.Current.ServiceMessage(this.Context, $"RoutingService partition Key {partitionKey} connecting to IoT Hub partition ID {eventHubPartitionId}");
             EventHubReceiver eventHubReceiver = await eventHubClient.GetDefaultConsumerGroup().CreateReceiverAsync(eventHubPartitionId);
-            
+
             return eventHubReceiver;
         }
     }
