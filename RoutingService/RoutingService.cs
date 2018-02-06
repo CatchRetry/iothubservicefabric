@@ -37,12 +37,30 @@ namespace RoutingService
         /// <param name="cancellationToken">Canceled when Service Fabric needs to shut down this service replica.</param>
         protected override async Task RunAsync(CancellationToken cancellationToken)
         {
+            var partitionKey = GetServicePartitionKey();
+            // This service message can be seen by adding 'MyCompany-IotIngestion-RoutingService' in Diagnostic Event view / Configure
+            ServiceEventSource.Current.ServiceMessage(this.Context, $"ServiceContext started for Partition {partitionKey}");
+
             while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
                 await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
             }
+        }
+
+        /// <summary>
+        /// Each partition of this service corresponds to a partition in IoT Hub.
+        /// IoT Hub partitions are numbered 0..n-1, up to n = 32.
+        /// This service needs to use an identical partitioning scheme. 
+        /// The low key of every partition corresponds to an IoT Hub partition.
+        /// </summary>
+        /// <returns></returns>
+        private long GetServicePartitionKey()
+        {
+            Int64RangePartitionInformation partitionInfo = (Int64RangePartitionInformation)this.Partition.PartitionInfo;
+            long servicePartitionKey = partitionInfo.LowKey;
+            return servicePartitionKey;
         }
     }
 }

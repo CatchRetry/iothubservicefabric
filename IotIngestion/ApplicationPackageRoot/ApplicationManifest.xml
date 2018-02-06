@@ -24,7 +24,7 @@
   <DefaultServices>
     <Service Name="RoutingService" ServicePackageActivationMode="ExclusiveProcess">
       <StatefulService ServiceTypeName="RoutingServiceType" TargetReplicaSetSize="[RoutingService_TargetReplicaSetSize]" MinReplicaSetSize="[RoutingService_MinReplicaSetSize]">
-        <UniformInt64Partition PartitionCount="[RoutingService_PartitionCount]" LowKey="-9223372036854775808" HighKey="9223372036854775807" />
+        <UniformInt64Partition PartitionCount="[RoutingService_PartitionCount]" LowKey="0" HighKey="1" />
       </StatefulService>
     </Service>
   </DefaultServices>
