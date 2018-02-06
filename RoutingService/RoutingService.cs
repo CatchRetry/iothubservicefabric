@@ -41,12 +41,31 @@ namespace RoutingService
             // This service message can be seen by adding 'MyCompany-IotIngestion-RoutingService' in Diagnostic Event view / Configure
             ServiceEventSource.Current.ServiceMessage(this.Context, $"ServiceContext started for Partition {partitionKey}");
 
+            string iotHubConnectionString = GetIotHubConnectionString();
+            ServiceEventSource.Current.ServiceMessage(this.Context, $"IotHub ConnectionString = {iotHubConnectionString}");
+
             while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
                 await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
             }
+        }
+
+        /// <summary>
+        /// Get the IoT Hub connection string from the Settings.xml config file
+        /// from a configuration package named "Config"
+        /// </summary>
+        /// <param name="context"></param>
+        /// <returns></returns>
+        private string GetIotHubConnectionString()
+        {
+            return this.Context.CodePackageActivationContext
+                .GetConfigurationPackageObject("Config")
+                .Settings
+                .Sections["IoTHubConfigInformation"]
+                .Parameters["ConnectionString"]
+                .Value;
         }
 
         /// <summary>
