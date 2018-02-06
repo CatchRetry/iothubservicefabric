@@ -159,7 +159,7 @@ namespace RoutingService
             string eventHubPartitionId = eventHubRuntimeInfo.PartitionIds[partitionKey];
 
             ServiceEventSource.Current.ServiceMessage(this.Context, $"RoutingService partition Key {partitionKey} connecting to IoT Hub partition ID {eventHubPartitionId}");
-            EventHubReceiver eventHubReceiver = await eventHubClient.GetDefaultConsumerGroup().CreateReceiverAsync(eventHubPartitionId);
+            EventHubReceiver eventHubReceiver = await eventHubClient.GetDefaultConsumerGroup().CreateReceiverAsync(eventHubPartitionId, DateTime.UtcNow);
 
             return eventHubReceiver;
         }
