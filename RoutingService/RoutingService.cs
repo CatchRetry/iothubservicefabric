@@ -50,6 +50,9 @@ namespace RoutingService
             // Get an EventHub client connected to the IOT Hub
             EventHubClient eventHubClient = GetAmqpEventHubClient(iotHubConnectionString);
 
+            // Get a receiver connected to the service matching partition of the IOT Hub
+            EventHubReceiver eventHubReceiver = await GetEventHubReceiverAsync(eventHubClient, partitionKey);
+
             while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -113,6 +116,31 @@ namespace RoutingService
             EventHubClient eventHubClient = messagingFactory.CreateEventHubClient("messages/events");
 
             return eventHubClient;
+        }
+
+        /// <summary>
+        /// Creates an EventHubReceiver connected though ServiceBus
+        /// with AMQP protocol
+        /// </summary>
+        /// <param name="eventHubClient">Event Hub Client</param>
+        /// <param name="partitionKey">IOT Hub Partition Key</param>
+        /// <returns></returns>
+        private async Task<EventHubReceiver> GetEventHubReceiverAsync(EventHubClient eventHubClient, long partitionKey)
+        {
+            //Get the EventHubRuntimeInfo
+            EventHubRuntimeInformation eventHubRuntimeInfo = await eventHubClient.GetRuntimeInformationAsync();
+
+            // Get an IoT Hub partition ID that corresponds to this partition's low key.
+            // This assumes that this service has a partition count 'n' that is equal to the IoT Hub partition count and a partition range of 0..n-1.
+            // For example, given an IoT Hub with 32 partitions, this service should be created with:
+            // partition count = 32
+            // partition range = 0..31
+            string eventHubPartitionId = eventHubRuntimeInfo.PartitionIds[partitionKey];
+
+            ServiceEventSource.Current.ServiceMessage(this.Context, $"RoutingService partition Key {partitionKey} connecting to IoT Hub partition ID {eventHubPartitionId}");
+            EventHubReceiver eventHubReceiver = await eventHubClient.GetDefaultConsumerGroup().CreateReceiverAsync(eventHubPartitionId);
+            
+            return eventHubReceiver;
         }
     }
 }
