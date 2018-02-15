@@ -1,12 +1,14 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Fabric;
+using System.Globalization;
 using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.ServiceBus;
 using Microsoft.ServiceBus.Messaging;
+using Microsoft.ServiceFabric.Data;
 using Microsoft.ServiceFabric.Data.Collections;
 using Microsoft.ServiceFabric.Services.Communication.Runtime;
 using Microsoft.ServiceFabric.Services.Runtime;
@@ -18,6 +20,10 @@ namespace RoutingService
     /// </summary>
     internal sealed class RoutingService : StatefulService
     {
+        private const string OffsetDictionaryName = "OffsetDictionary";
+        private const string OffsetKey = "offsetKey";
+        private const int OffsetMsgInterval = 10;
+
         public RoutingService(StatefulServiceContext context)
             : base(context)
         { }
@@ -51,9 +57,15 @@ namespace RoutingService
             // Get an EventHub client connected to the IOT Hub
             EventHubClient eventHubClient = GetAmqpEventHubClient(iotHubConnectionString);
 
-            // Get a receiver connected to the service matching partition of the IOT Hub
-            EventHubReceiver eventHubReceiver = await GetEventHubReceiverAsync(eventHubClient, partitionKey);
+            // These Reliable Dictionaries are used to keep track of our position in IoT Hub.
+            // If this service fails over, this will allow it to pick up where it left off in the event stream.
+            IReliableDictionary<string, string> offsetDictionary =
+                await this.StateManager.GetOrAddAsync<IReliableDictionary<string, string>>(OffsetDictionaryName);
 
+            // Get a receiver connected to the service matching partition of the IOT Hub
+            EventHubReceiver eventHubReceiver = await GetEventHubReceiverAsync(eventHubClient, partitionKey, offsetDictionary);
+
+            int readMsgCountSinceOffset = 0;
             while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -70,6 +82,16 @@ namespace RoutingService
                         ServiceEventSource.Current.Message(
                             $"(RoutingService's Partition {partitionKey}) received a message: {Encoding.UTF8.GetString(eventData.GetBytes())})"
                         );
+
+                        if (++readMsgCountSinceOffset == OffsetMsgInterval-1)
+                        {
+                            using (ITransaction tx = this.StateManager.CreateTransaction())
+                            {
+                                await offsetDictionary.SetAsync(tx, OffsetKey, eventData.Offset);
+                                await tx.CommitAsync();
+                            }
+                            readMsgCountSinceOffset = 0;
+                        }
                     }
                 }
                 catch (Exception e)
@@ -112,7 +134,6 @@ namespace RoutingService
             return servicePartitionKey;
         }
 
-
         /// <summary>
         /// Creates an EventHubClient through AMQP protocol
         /// </summary>
@@ -145,8 +166,9 @@ namespace RoutingService
         /// </summary>
         /// <param name="eventHubClient">Event Hub Client</param>
         /// <param name="partitionKey">IOT Hub Partition Key</param>
+        /// <param name="offsetDictionary"></param>
         /// <returns></returns>
-        private async Task<EventHubReceiver> GetEventHubReceiverAsync(EventHubClient eventHubClient, long partitionKey)
+        private async Task<EventHubReceiver> GetEventHubReceiverAsync(EventHubClient eventHubClient, long partitionKey, IReliableDictionary<string, string> offsetDictionary)
         {
             //Get the EventHubRuntimeInfo
             EventHubRuntimeInformation eventHubRuntimeInfo = await eventHubClient.GetRuntimeInformationAsync();
@@ -158,9 +180,33 @@ namespace RoutingService
             // partition range = 0..31
             string eventHubPartitionId = eventHubRuntimeInfo.PartitionIds[partitionKey];
 
-            ServiceEventSource.Current.ServiceMessage(this.Context, $"RoutingService partition Key {partitionKey} connecting to IoT Hub partition ID {eventHubPartitionId}");
-            EventHubReceiver eventHubReceiver = await eventHubClient.GetDefaultConsumerGroup().CreateReceiverAsync(eventHubPartitionId, DateTime.UtcNow);
+            EventHubReceiver eventHubReceiver;
 
+            using (ITransaction tx = this.StateManager.CreateTransaction())
+            {
+                ConditionalValue<string> offsetResult =
+                    await offsetDictionary.TryGetValueAsync(tx, OffsetKey, LockMode.Default);
+
+                if (offsetResult.HasValue)
+                {
+                    ServiceEventSource.Current.ServiceMessage(
+                        this.Context,
+                        $"RoutingService partition Key {partitionKey} connecting to IoT Hub partition ID {eventHubPartitionId} with offset {offsetResult.Value}");
+
+                    eventHubReceiver = await eventHubClient.GetDefaultConsumerGroup()
+                        .CreateReceiverAsync(eventHubPartitionId, offsetResult.Value);
+                }
+                else
+                {
+                    var dateTimeUtc = DateTime.UtcNow;
+                    ServiceEventSource.Current.ServiceMessage(
+                        this.Context,
+                        $"RoutingService partition Key {partitionKey} connecting to IoT Hub partition ID {eventHubPartitionId} with offset {dateTimeUtc}");
+
+                    eventHubReceiver = await eventHubClient.GetDefaultConsumerGroup()
+                        .CreateReceiverAsync(eventHubPartitionId, dateTimeUtc);
+                }
+            }
             return eventHubReceiver;
         }
     }
